@@ -1,0 +1,12 @@
+{
+  "prediction_topic": "/netcatch/dynamics/prediction",
+  "multicast_group": "239.255.42.99",
+  "multicast_port": 15150,
+  "multicast_ttl": 1,
+  "multicast_interface_ip": "10.1.1.108",
+  "publish_hz": 30.0,
+  "prediction_stale_s": 0.15,
+  "max_packet_bytes": 1200,
+  "frame_id": "mocap_world_enu",
+  "object_name": "obj1"
+}
