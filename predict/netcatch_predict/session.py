@@ -270,6 +270,16 @@ class PredictionSession:
         self._set_terminal(SessionState.DONE, "cancelled", now)
         return SessionTransition(True, self.reason)
 
+    def finish(self, *, monotonic_s: float, reason: str) -> SessionTransition:
+        """End the current throw immediately (e.g. on a fatal data gap)."""
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("finish reason must be a non-empty string")
+        now = self._observe_time(monotonic_s)
+        if self.state in (SessionState.DONE, SessionState.ERROR):
+            return SessionTransition(False, "already_terminal")
+        self._set_terminal(SessionState.DONE, reason, now)
+        return SessionTransition(True, self.reason)
+
     def fail(self, *, monotonic_s: float, reason: str) -> SessionTransition:
         if not isinstance(reason, str) or not reason:
             raise ValueError("error reason must be a non-empty string")

@@ -383,18 +383,25 @@ class PredictionNode(Node):
         self._latest_estimate = None
         self._packet_reason = reason if transition.accepted else transition.reason
 
-    def _process_new_estimate(self, now_ns: int, now_monotonic_s: float) -> None:
+    def _end_session(self, now_monotonic_s: float, reason: str) -> None:
+        transition = self.session.finish(monotonic_s=now_monotonic_s, reason=reason)
+        self._latest_prediction_valid = False
+        self._latest_prediction = None
+        self._latest_estimate = None
+        self._packet_reason = reason if transition.accepted else transition.reason
+
+    def _process_new_estimate(self, now_ns: int, now_monotonic_s: float) -> bool:
         snapshot = self.estimator.snapshot()
         counts = (
             self.estimator.measurement_counts["pose"],
             self.estimator.measurement_counts["twist"],
         )
         if counts == self._last_processed_counts:
-            return
+            return False
         self._last_processed_counts = counts
         if not snapshot.ready or snapshot.state_time_ns is None:
             self._mark_lost(now_monotonic_s, "estimator_not_ready")
-            return
+            return True
 
         estimate_time_ns = max(now_ns, snapshot.state_time_ns)
         estimate = self.estimator.estimate_at(estimate_time_ns)
@@ -410,12 +417,12 @@ class PredictionNode(Node):
         )
         if prediction is None:
             self._mark_lost(now_monotonic_s, "no_future_descending_crossing")
-            return
+            return True
 
         mapping = self.mapper.consider(prediction.intercept_m)
         if not mapping.accepted:
             self._mark_lost(now_monotonic_s, mapping.reason)
-            return
+            return True
         admission = self.session.admit_prediction(
             command_ready=mapping.command_ready,
             monotonic_s=now_monotonic_s,
@@ -426,8 +433,9 @@ class PredictionNode(Node):
         self._latest_prediction_valid = admission.valid
         if not admission.accepted:
             self._packet_reason = mapping.reason if not mapping.command_ready else admission.reason
-            return
+            return True
         self._packet_reason = mapping.reason if admission.valid else admission.reason
+        return True
 
     def _packet(self) -> dict[str, object]:
         state = self.session.state
@@ -600,27 +608,31 @@ class PredictionNode(Node):
             pose_problem = self._pose_health.problem_reason(
                 now_ns=now_ns,
                 accepted_time_ns=snapshot.pose_time_ns,
-                stale_after_s=self.config.pose_stale_s,
+                stale_after_s=self.config.lost_after_gap_s,
             )
             twist_problem = self._twist_health.problem_reason(
                 now_ns=now_ns,
                 accepted_time_ns=snapshot.twist_time_ns,
-                stale_after_s=self.config.twist_stale_s + self.config.pose_only_grace_s,
+                stale_after_s=self.config.lost_after_gap_s,
             )
             if pose_problem is not None:
-                self._mark_lost(now_monotonic_s, pose_problem)
+                self._end_session(now_monotonic_s, pose_problem)
             elif twist_problem is not None:
-                self._mark_lost(now_monotonic_s, twist_problem)
+                self._end_session(now_monotonic_s, twist_problem)
             elif not snapshot.ready:
                 self._latest_prediction_valid = False
                 self._packet_reason = "waiting_for_post_release_measurements"
             else:
-                self._process_new_estimate(now_ns, now_monotonic_s)
+                processed = self._process_new_estimate(now_ns, now_monotonic_s)
                 if (
-                    self._latest_prediction_valid
+                    processed
+                    and self._latest_prediction_valid
                     and twist_age > self.config.twist_stale_s
                 ):
                     self._packet_reason = "pose_only_grace"
+            if self.session.state is SessionState.DONE:
+                self._destroy_object_subscriptions()
+                self._clear_raw_measurements()
             self._publish()
         except Exception as exc:  # ROS boundary: convert unexpected faults to finite ERROR packets.
             self.get_logger().error(f"prediction callback failed: {type(exc).__name__}: {exc}")

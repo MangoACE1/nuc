@@ -33,6 +33,8 @@ Mac 和 Jetson 都不运行 predictor。
 - 最大位置/速度模型残差：`0.012 m` / `0.20 m/s`
 - 最大拟合加速度误差：`4.0 m/s²`（相对 `[0, 0, -9.81] m/s²`）
 - 连续确认窗口：`2`
+- 空气阻力：`drag_beta_m_inv = 0.04 m⁻¹`（由实测数据标定，二次阻力，用于 EKF 与弹道预测）
+- 动捕断流保护：断流 `< 0.25 s` 保持 `TRACKING/valid=true` 并沿用上一份有效预测；`≥ 0.25 s` 直接结束本次投掷（`DONE`）
 
 没有修改算法参数时，不需要每次开机编辑该文件。
 
@@ -165,7 +167,7 @@ ros2 service call /netcatch/dynamics/release std_srvs/srv/Trigger '{}'
 4. 自由飞行确认后自动进入 `TRACKING`，predictor 日志出现 `free flight detected`
 5. 连续稳定后出现 `TRACKING valid=true`
 6. target 的 XY 是有限值且不会来回跳动，Z 始终为 `0.4`
-7. 物体数据丢失时进入 `LOST valid=false`，恢复后重新积累稳定预测
+7. 物体数据丢失超过 `0.25 s` 直接进入 `DONE`（结束本次投掷）
 8. 本次投掷结束后进入 `DONE valid=false`
 
 如果 arm 后始终没有自动进入 `TRACKING`，或进入后直接 `LOST`，先在 NUC 重新检查：

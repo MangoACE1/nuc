@@ -181,6 +181,24 @@ def test_cancel_and_error_are_terminal_until_rearm() -> None:
     assert failed.state is SessionState.WAIT_RELEASE
 
 
+def test_finish_ends_throw_immediately_until_rearm() -> None:
+    from netcatch_predict.session import SessionState
+
+    session = _session()
+    session.release(monotonic_s=0.0)
+    session.accept_prediction(monotonic_s=0.1, time_to_contact_s=0.5)
+
+    transition = session.finish(monotonic_s=0.2, reason="pose_stale")
+    assert transition.accepted
+    assert session.state is SessionState.DONE
+    assert session.reason == "pose_stale"
+    assert not session.can_accept_object_update
+    assert session.finish(monotonic_s=0.3, reason="again").accepted is False
+
+    session.rearm(monotonic_s=0.4)
+    assert session.state is SessionState.WAIT_RELEASE
+
+
 def test_session_rejects_decreasing_or_nonfinite_monotonic_times() -> None:
     session = _session()
     session.release(monotonic_s=1.0)

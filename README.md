@@ -94,7 +94,7 @@ ros2 service call /netcatch/dynamics/arm std_srvs/srv/Trigger '{}'
 - predictor 缓存最近 `0.25 s` 的 `obj1` pose/twist，并用连续两个 `0.05 s` 弹道一致性窗口排除持球和摆臂运动；确认后回溯、清空 EKF、只回放自由飞行样本并自动进入 `TRACKING`。
 - `/netcatch/dynamics/release` 仅是绕过检测的强制调试入口，正式 demo 不执行。
 - 第一个有效 target 前必须连续得到 3 个稳定预测；前 2 个仍为 `TRACKING/valid=false`。第 3 个首次有效 target 才启动 5 s active budget 和预测接触 deadline。
-- `LOST` 会立刻令输出无效，并只锁存一次 hold point；恢复也需 5 个新 good predictions。
+- 动捕数据短时断流（< `0.25 s`）时保持 `TRACKING/valid=true`，沿用上一份有效预测（整包冻结）；断流超过 `0.25 s` 直接进入 `DONE`（结束本次投掷、取消对象订阅）。
 - active budget 在 `LOST/RECOVERING` 暂停，预测接触 deadline 不暂停。
 - `DONE` 会取消 `obj1` pose/twist 订阅，直到 rearm 后才重新订阅。
 
@@ -102,6 +102,6 @@ ros2 service call /netcatch/dynamics/arm std_srvs/srv/Trigger '{}'
 
 开发验收：开发机上的 `./verify_dev.sh` 返回 0，统一测试全部通过。部署包验收：NUC 上的 `./verify_nuc.sh` 返回 0，契约、两组生产模块编译和三个 launcher 的 `bash -n` 全部通过。
 
-现场验收：完成三点 VRPN 坐标对比；确认 `obj1` 类型、时间戳与约 200 Hz 真正交付；预测 topic 约 30 Hz；验证 arm 后持球/摆臂不误触发、手抛后自动进入 `TRACKING`、5 次稳定门控、`LOST`/恢复、cancel/rearm；receiver 与 `tcpdump` 均看到从指定通信接口发出的 `239.255.42.99:15150` 组播，约 30 Hz、单包不超过 1200 B。
+现场验收：完成三点 VRPN 坐标对比；确认 `obj1` 类型、时间戳与约 200 Hz 真正交付；预测 topic 约 30 Hz；验证 arm 后持球/摆臂不误触发、手抛后自动进入 `TRACKING`、3 次稳定门控、`LOST`/恢复、cancel/rearm；receiver 与 `tcpdump` 均看到从指定通信接口发出的 `239.255.42.99:15150` 组播，约 30 Hz、单包不超过 1200 B。
 
 当前 Wi-Fi 网络上的 NUC 到三台 Jetson 组播已经完成测试；以后更换 Wi-Fi、有线接口或网段时，需要重新检查各机 IP 和组播接收。正式 Jetson `dynamics` receiver 与 policy 接入仍是后续工作。

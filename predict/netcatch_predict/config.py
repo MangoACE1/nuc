@@ -70,6 +70,7 @@ class PredictConfig:
     pose_stale_s: float
     twist_stale_s: float
     pose_only_grace_s: float
+    lost_after_gap_s: float
     recovery_good_samples: int
     consistency_samples: int
     consistency_spread_max_m: float
@@ -146,6 +147,7 @@ class PredictConfig:
             "publish_rate_hz",
             "pose_stale_s",
             "twist_stale_s",
+            "lost_after_gap_s",
             "consistency_spread_max_m",
             "jump_reject_m",
             "pose_position_std_m",
