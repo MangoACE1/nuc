@@ -183,3 +183,41 @@ def test_ballistics_rejects_nonfinite_or_malformed_state_inputs(
             gravity_mps2=9.81,
             drag_beta_m_inv=0.0,
         )
+
+
+def test_plane_crossing_fraction_interpolates_descending_straddle() -> None:
+    from netcatch_predict.ballistics import descending_plane_crossing_fraction
+
+    # falls from z=1.0 to z=0.6; plane 0.8 is halfway down that segment.
+    previous = np.array([0.0, 0.0, 1.0])
+    current = np.array([1.0, 1.0, 0.6])
+    assert descending_plane_crossing_fraction(previous, current, 0.8) == pytest.approx(
+        0.5, abs=1e-12
+    )
+    fraction = descending_plane_crossing_fraction(previous, current, 0.8)
+    crossing_xy = previous[:2] + fraction * (current[:2] - previous[:2])
+    assert crossing_xy == pytest.approx([0.5, 0.5], abs=1e-12)
+
+
+def test_plane_crossing_fraction_rejects_non_descending_or_non_straddling() -> None:
+    from netcatch_predict.ballistics import descending_plane_crossing_fraction
+
+    plane = 0.833
+    cases = [
+        (np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 0.9])),  # both above
+        (np.array([0.0, 0.0, 0.7]), np.array([0.0, 0.0, 0.5])),  # both below
+        (np.array([0.0, 0.0, 0.7]), np.array([0.0, 0.0, 0.9])),  # rising through plane
+        (np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 0.9])),  # descending but no straddle
+    ]
+    for previous, current in cases:
+        assert descending_plane_crossing_fraction(previous, current, plane) is None
+
+
+def test_plane_crossing_fraction_exact_boundary_is_zero() -> None:
+    from netcatch_predict.ballistics import descending_plane_crossing_fraction
+
+    previous = np.array([2.0, 3.0, 0.833])
+    current = np.array([4.0, 5.0, 0.5])
+    assert descending_plane_crossing_fraction(previous, current, 0.833) == pytest.approx(
+        0.0, abs=1e-12
+    )

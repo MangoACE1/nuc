@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import time
 from pathlib import Path
 from typing import Sequence
@@ -16,7 +17,12 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
-from .ballistics import BallisticPrediction, predict_descending_crossing
+from .ballistics import (
+    BallisticPrediction,
+    descending_plane_crossing_fraction,
+    predict_descending_crossing,
+)
+from .csv_logger import CsvDebugLogger
 from .config import PredictConfig, load_config
 from .estimator import EstimatorSnapshot, StateEstimator
 from .measurement_time import resolve_measurement_time_ns
@@ -51,7 +57,7 @@ def _measurement_time_ns(
 class PredictionNode(Node):
     """Thin single-threaded transport adapter around the pure core."""
 
-    def __init__(self, config: PredictConfig) -> None:
+    def __init__(self, config: PredictConfig, *, csv_log_path: str | None = None) -> None:
         super().__init__("netcatch_dynamics_predict")
         self.config = config
         self.estimator = StateEstimator(
@@ -109,6 +115,21 @@ class PredictionNode(Node):
         self._pose_subscription = None
         self._twist_subscription = None
 
+        self._last_raw_pose: np.ndarray | None = None
+        self._last_raw_twist: np.ndarray | None = None
+        self._prev_raw_pose_time_ns: int | None = None
+        self._actual_capture_m: np.ndarray | None = None
+        self._actual_capture_time_ns: int | None = None
+        self._ekf_epoch_start_monotonic_s: float | None = None
+        self.csv_logger: CsvDebugLogger | None = None
+        if csv_log_path:
+            try:
+                self.csv_logger = CsvDebugLogger(csv_log_path)
+            except OSError as exc:
+                self.get_logger().warning(
+                    f"csv logging disabled: cannot open {csv_log_path}: {exc}"
+                )
+
         self._publisher = self.create_publisher(String, config.output_topic, 10)
         self._payload_subscription = self.create_subscription(
             PoseStamped, config.payload_pose_topic, self._on_payload_pose, 10
@@ -153,6 +174,11 @@ class PredictionNode(Node):
         receive_time_ns = int(self.get_clock().now().nanoseconds)
         time_ns = _measurement_time_ns(message, receive_time_ns=receive_time_ns)
         value = [position.x, position.y, position.z]
+        previous_pose = self._last_raw_pose
+        previous_time_ns = self._prev_raw_pose_time_ns
+        self._last_raw_pose = np.asarray(value, dtype=float)
+        self._prev_raw_pose_time_ns = time_ns
+        self._update_actual_capture(previous_pose, previous_time_ns, time_ns)
         if self.session.state is SessionState.WAIT_RELEASE:
             if self.session.is_armed:
                 self.release_detector.observe_pose(
@@ -177,6 +203,7 @@ class PredictionNode(Node):
         receive_time_ns = int(self.get_clock().now().nanoseconds)
         time_ns = _measurement_time_ns(message, receive_time_ns=receive_time_ns)
         value = [velocity.x, velocity.y, velocity.z]
+        self._last_raw_twist = np.asarray(value, dtype=float)
         if self.session.state is SessionState.WAIT_RELEASE:
             if self.session.is_armed:
                 detection = self.release_detector.observe_twist(
@@ -196,6 +223,46 @@ class PredictionNode(Node):
             )
         )
 
+    def _update_actual_capture(
+        self,
+        previous_pose: np.ndarray | None,
+        previous_time_ns: int | None,
+        current_time_ns: int,
+    ) -> None:
+        """Latch where the object actually descends through the prediction plane.
+
+        Interpolates XY between the last sample above the plane and the first
+        sample at/below it, so the recorded capture point is comparable to the
+        predicted intercept.  Runs only after release (not while holding).
+        """
+        if (
+            self._actual_capture_m is not None
+            or previous_pose is None
+            or self.session.state is SessionState.WAIT_RELEASE
+        ):
+            return
+        current_pose = self._last_raw_pose
+        plane_z = self.config.prediction_plane_z_m
+        fraction = descending_plane_crossing_fraction(
+            previous_pose, current_pose, plane_z
+        )
+        if fraction is None:
+            return
+        crossing_xy = previous_pose[:2] + fraction * (current_pose[:2] - previous_pose[:2])
+        self._actual_capture_m = np.array(
+            [float(crossing_xy[0]), float(crossing_xy[1]), plane_z], dtype=float
+        )
+        if previous_time_ns is not None:
+            self._actual_capture_time_ns = previous_time_ns + round(
+                fraction * (current_time_ns - previous_time_ns)
+            )
+
+    def _clear_raw_measurements(self) -> None:
+        """Drop stale raw samples so terminal rows do not show mismatched data."""
+        self._last_raw_pose = None
+        self._last_raw_twist = None
+        self._prev_raw_pose_time_ns = None
+
     def _apply_estimator_measurement(self, item: BufferedMeasurement) -> None:
         if item.source == "pose":
             result = self.estimator.update_pose(item.value, time_ns=item.time_ns)
@@ -210,6 +277,8 @@ class PredictionNode(Node):
         )
         if not result.accepted and not result.reason.startswith("out_of_order"):
             self.get_logger().debug(f"{item.source} rejected: {result.reason}")
+        if result.accepted and self._ekf_epoch_start_monotonic_s is None:
+            self._ekf_epoch_start_monotonic_s = time.monotonic()
 
     def _on_payload_pose(self, message: PoseStamped) -> None:
         position = np.array(
@@ -275,6 +344,12 @@ class PredictionNode(Node):
         self._latest_estimate = None
         self._latest_prediction = None
         self._latest_prediction_valid = False
+        self._last_raw_pose = None
+        self._last_raw_twist = None
+        self._prev_raw_pose_time_ns = None
+        self._actual_capture_m = None
+        self._actual_capture_time_ns = None
+        self._ekf_epoch_start_monotonic_s = None
 
     def _on_rearm(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         transition = self.session.rearm(monotonic_s=time.monotonic())
@@ -291,6 +366,7 @@ class PredictionNode(Node):
         self._packet_reason = transition.reason
         if self.session.state is SessionState.DONE:
             self._destroy_object_subscriptions()
+            self._clear_raw_measurements()
         return self._service_reply(response, transition.accepted, transition.reason)
 
     def _source_age_s(self, now_ns: int, source_time_ns: int | None) -> float:
@@ -415,9 +491,85 @@ class PredictionNode(Node):
         }
 
     def _publish(self) -> None:
+        packet = self._packet()
+        if self.csv_logger is not None:
+            self._log_csv_row(packet)
         message = String()
-        message.data = encode_prediction_packet(self._packet())
+        message.data = encode_prediction_packet(packet)
         self._publisher.publish(message)
+
+    def _log_csv_row(self, packet: dict[str, object]) -> None:
+        """Append one debug row per published packet once the EKF epoch runs."""
+        if self.csv_logger is None or self._ekf_epoch_start_monotonic_s is None:
+            return
+        now_monotonic_s = time.monotonic()
+        snapshot = self.estimator.snapshot()
+        state = snapshot.state
+        raw_pose = self._last_raw_pose
+        raw_twist = self._last_raw_twist
+        intercept = packet["intercept_m"]
+        command = packet["command_target_m"]
+        hold = packet["hold_target_m"]
+
+        def triple(values: Sequence[float] | None, prefix: str) -> dict[str, object]:
+            if values is None:
+                return {f"{prefix}_x": "", f"{prefix}_y": "", f"{prefix}_z": ""}
+            return {
+                f"{prefix}_x": float(values[0]),
+                f"{prefix}_y": float(values[1]),
+                f"{prefix}_z": float(values[2]),
+            }
+
+        row: dict[str, object] = {
+            "t_monotonic_s": now_monotonic_s,
+            "ekf_elapsed_s": now_monotonic_s - self._ekf_epoch_start_monotonic_s,
+            "throw_id": packet["throw_id"],
+            "state": packet["state"],
+            "valid": 1 if packet["valid"] else 0,
+            "reason": packet["reason"],
+        }
+        row.update(triple(raw_pose, "pose_measured"))
+        row.update(triple(raw_twist, "twist_measured"))
+        row.update(
+            {
+                "ekf_x": float(state[0]),
+                "ekf_y": float(state[1]),
+                "ekf_z": float(state[2]),
+                "ekf_vx": float(state[3]),
+                "ekf_vy": float(state[4]),
+                "ekf_vz": float(state[5]),
+            }
+        )
+        row.update(triple(intercept, "intercept"))
+        row.update(
+            {
+                "time_to_contact_s": packet["time_to_contact_s"],
+                "intercept_time_ns": packet["intercept_time_ns"],
+                "xy_radius_95_m": packet["xy_radius_95_m"],
+                "confidence": packet["confidence"],
+            }
+        )
+        row.update(triple(command, "command_target"))
+        row.update(triple(hold, "hold_target"))
+        row.update(triple(self._actual_capture_m, "actual_capture"))
+        row.update(
+            {
+                "actual_capture_time_ns": (
+                    self._actual_capture_time_ns
+                    if self._actual_capture_time_ns is not None
+                    else ""
+                ),
+                "state_time_ns": packet["state_time_ns"],
+            }
+        )
+        try:
+            self.csv_logger.row(row)
+        except Exception as exc:  # CSV failures must never take down prediction.
+            self.get_logger().error(
+                f"csv logging failed: {type(exc).__name__}: {exc}; disabling"
+            )
+            self.csv_logger.close()
+            self.csv_logger = None
 
     def _on_publish_timer(self) -> None:
         now_monotonic_s = time.monotonic()
@@ -428,11 +580,13 @@ class PredictionNode(Node):
                 self._latest_prediction_valid = False
                 self._packet_reason = self.session.reason
                 self._destroy_object_subscriptions()
+                self._clear_raw_measurements()
                 self._publish()
                 return
             if self.session.state is SessionState.ERROR:
                 self._latest_prediction_valid = False
                 self._packet_reason = self.session.reason
+                self._clear_raw_measurements()
                 self._publish()
                 return
             if self.session.state is SessionState.WAIT_RELEASE:
@@ -482,6 +636,16 @@ class PredictionNode(Node):
 def _parse_arguments(argv: Sequence[str] | None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="NetCatch NUC ballistic prediction process")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument(
+        "--csv",
+        default=os.environ.get("NETCATCH_PREDICT_CSV"),
+        help=(
+            "Base path for CSV debug logging; a start-time stamp is inserted "
+            "before the extension (e.g. logs/predict.csv -> "
+            "logs/predict_20260902_101500_123456.csv). Empty disables logging. "
+            "Defaults to $NETCATCH_PREDICT_CSV."
+        ),
+    )
     parsed, ros_args = parser.parse_known_args(argv)
     return parsed, ros_args
 
@@ -490,7 +654,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parsed, ros_args = _parse_arguments(argv)
     config = load_config(parsed.config)
     rclpy.init(args=ros_args)
-    node = PredictionNode(config)
+    node = PredictionNode(config, csv_log_path=parsed.csv)
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     try:
@@ -499,6 +663,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         pass
     finally:
         executor.remove_node(node)
+        if node.csv_logger is not None:
+            node.csv_logger.close()
         node.destroy_node()
         rclpy.shutdown()
 

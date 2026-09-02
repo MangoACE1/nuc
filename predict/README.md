@@ -36,6 +36,26 @@ Mac 和 Jetson 都不运行 predictor。
 
 没有修改算法参数时，不需要每次开机编辑该文件。
 
+## 2.1 CSV 调试日志（可选）
+
+需要记录每次投掷的调试明细时，用 `--csv` 指定一个基准路径，或设置环境变量 `NETCATCH_PREDICT_CSV`（两者都不设置则关闭）：
+
+```bash
+cd ~/20260829/nuc/predict
+./run_predict.sh --csv logs/predict.csv
+# 等价：NETCATCH_PREDICT_CSV=logs/predict.csv ./run_predict.sh
+```
+
+每次启动会生成带时间戳的新文件（如 `logs/predict_20260902_101500_123456.csv`），不覆盖历史；目录不存在会自动创建。日志只在 **EKF 启动后**（自由飞行确认/手动 release、滤波器首次接受测量起）以发布频率 30 Hz 逐行追加，每行包含：
+
+- 时间与状态：`t_monotonic_s`、`ekf_elapsed_s`（EKF 已启动计时，秒）、`throw_id`、`state`、`valid`（有效位）、`reason`（无目标预测/不发布的原因，如 `mapping_not_committed`、`no_future_descending_crossing`、`estimator_not_ready` 等）
+- 球实际位置：`pose_measured_*`/`twist_measured_*`（最近一次接收的原始测量）、`ekf_*`（EKF 估计位置与速度）
+- 预测结果：`intercept_*`、`time_to_contact_s`、`intercept_time_ns`、`xy_radius_95_m`、`confidence`、`command_target_*`、`hold_target_*`
+- 实际捕获点：`actual_capture_*` + `actual_capture_time_ns` —— 球 obj1 实际下降穿过预测平面（z=0.833）的位置，由平面上下两个原始 pose 样本线性插值得到，可与预测 `intercept_*` 直接对比评估预测精度；球未穿过平面时为空
+- 数据时间戳：`state_time_ns`（滤波状态时刻）
+
+进入 `DONE`/`ERROR` 后对象订阅销毁，原始测量列会清空（空值），不会再用过期数据制造假残差；`ekf_*` 与 `actual_capture_*` 保留最后一次投掷的最终结果。写 CSV 失败只会在日志中报错并禁用记录，不会影响预测进程。
+
 ## 3. 每次实验开始时在 NUC 执行
 
 ### 3.1 NUC 终端 A：启动 predictor

@@ -93,7 +93,7 @@ ros2 service call /netcatch/dynamics/arm std_srvs/srv/Trigger '{}'
 - arm 只使能自动自由飞行检测，service 的 `success=true` 不代表已经离手、预测成功或接物成功。arm 后保持 `WAIT_RELEASE/valid=false`，reason 为 `armed_waiting_for_free_flight`。
 - predictor 缓存最近 `0.25 s` 的 `obj1` pose/twist，并用连续两个 `0.05 s` 弹道一致性窗口排除持球和摆臂运动；确认后回溯、清空 EKF、只回放自由飞行样本并自动进入 `TRACKING`。
 - `/netcatch/dynamics/release` 仅是绕过检测的强制调试入口，正式 demo 不执行。
-- 第一个有效 target 前必须连续得到 5 个稳定预测；前 4 个仍为 `TRACKING/valid=false`。第 5 个首次有效 target 才启动 5 s active budget 和预测接触 deadline。
+- 第一个有效 target 前必须连续得到 3 个稳定预测；前 2 个仍为 `TRACKING/valid=false`。第 3 个首次有效 target 才启动 5 s active budget 和预测接触 deadline。
 - `LOST` 会立刻令输出无效，并只锁存一次 hold point；恢复也需 5 个新 good predictions。
 - active budget 在 `LOST/RECOVERING` 暂停，预测接触 deadline 不暂停。
 - `DONE` 会取消 `obj1` pose/twist 订阅，直到 rearm 后才重新订阅。

@@ -27,7 +27,7 @@ def test_repository_config_loads_the_fixed_deployment_contract() -> None:
     assert cfg.catch_net_offset_z_fallback == 0.433
     assert cfg.catch_net_offset_z_fallback_m == 0.433
     assert cfg.prediction_plane_z_m == 0.833
-    assert cfg.release_mode == "manual"
+    assert cfg.release_mode == "armed_auto"
     assert cfg.active_tracking_budget_s == 5.0
     assert cfg.gravity_mps2 == 9.81
     assert cfg.drag_beta_m_inv == 0.0
@@ -36,8 +36,8 @@ def test_repository_config_loads_the_fixed_deployment_contract() -> None:
     assert cfg.twist_stale_s == 0.02
     assert cfg.pose_only_grace_s == 0.05
     assert cfg.recovery_good_samples == 5
-    assert cfg.consistency_samples == 5
-    assert cfg.consistency_spread_max_m == 0.05
+    assert cfg.consistency_samples == 3
+    assert cfg.consistency_spread_max_m == 0.1
     assert cfg.deadband_m == 0.01
     assert cfg.jump_reject_m == 0.15
     assert cfg.intercept_deadline_grace_s == 0.20

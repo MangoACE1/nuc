@@ -130,6 +130,35 @@ def xy_radius_95(covariance_xy: np.ndarray) -> float:
     return math.sqrt(CHI2_95_2D * max(0.0, float(eigenvalues[-1])))
 
 
+def descending_plane_crossing_fraction(
+    previous_pose_m: Sequence[float],
+    current_pose_m: Sequence[float],
+    plane_z_m: float,
+) -> float | None:
+    """Fraction of travel where a sample pair descends through a plane.
+
+    Returns the linear-interpolation fraction in [0, 1] at which the segment
+    from ``previous_pose_m`` to ``current_pose_m`` crosses ``plane_z_m`` while
+    descending, or None when the pair does not straddle the plane descending.
+    Used to back-compute the actual point where the object crossed the
+    prediction plane from two raw pose samples.
+    """
+    previous = np.asarray(previous_pose_m, dtype=float)
+    current = np.asarray(current_pose_m, dtype=float)
+    if previous.shape != (3,) or current.shape != (3,):
+        raise ValueError("pose samples must be three-vectors")
+    if not math.isfinite(plane_z_m):
+        raise ValueError("plane_z_m must be finite")
+    previous_z = float(previous[2])
+    current_z = float(current[2])
+    if not (previous_z >= plane_z_m >= current_z and current_z < previous_z):
+        return None
+    denominator = previous_z - current_z
+    if denominator <= 0.0:
+        return 0.0
+    return min(1.0, max(0.0, (previous_z - plane_z_m) / denominator))
+
+
 def _prediction_from_crossing(
     state: np.ndarray,
     transition: np.ndarray,
