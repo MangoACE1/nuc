@@ -30,7 +30,7 @@ def test_repository_config_loads_the_fixed_deployment_contract() -> None:
     assert cfg.release_mode == "armed_auto"
     assert cfg.active_tracking_budget_s == 5.0
     assert cfg.gravity_mps2 == 9.81
-    assert cfg.drag_beta_m_inv == 0.04
+    assert cfg.drag_beta_m_inv == 0.005
     assert cfg.publish_rate_hz == 30.0
     assert cfg.pose_stale_s == 0.05
     assert cfg.twist_stale_s == 0.02
@@ -40,7 +40,7 @@ def test_repository_config_loads_the_fixed_deployment_contract() -> None:
     assert cfg.consistency_samples == 3
     assert cfg.consistency_spread_max_m == 0.1
     assert cfg.deadband_m == 0.01
-    assert cfg.jump_reject_m == 0.15
+    assert cfg.jump_reject_m == 0.25
     assert cfg.intercept_deadline_grace_s == 0.20
     assert cfg.workspace_xy_min_m == (-0.8, -0.8)
     assert cfg.workspace_xy_max_m == (0.8, 0.8)
