@@ -116,7 +116,6 @@ class PredictionNode(Node):
         self._twist_subscription = None
 
         self._last_raw_pose: np.ndarray | None = None
-        self._last_raw_twist: np.ndarray | None = None
         self._prev_raw_pose_time_ns: int | None = None
         self._actual_capture_m: np.ndarray | None = None
         self._actual_capture_time_ns: int | None = None
@@ -203,7 +202,6 @@ class PredictionNode(Node):
         receive_time_ns = int(self.get_clock().now().nanoseconds)
         time_ns = _measurement_time_ns(message, receive_time_ns=receive_time_ns)
         value = [velocity.x, velocity.y, velocity.z]
-        self._last_raw_twist = np.asarray(value, dtype=float)
         if self.session.state is SessionState.WAIT_RELEASE:
             if self.session.is_armed:
                 detection = self.release_detector.observe_twist(
@@ -260,7 +258,6 @@ class PredictionNode(Node):
     def _clear_raw_measurements(self) -> None:
         """Drop stale raw samples so terminal rows do not show mismatched data."""
         self._last_raw_pose = None
-        self._last_raw_twist = None
         self._prev_raw_pose_time_ns = None
 
     def _apply_estimator_measurement(self, item: BufferedMeasurement) -> None:
@@ -345,7 +342,6 @@ class PredictionNode(Node):
         self._latest_prediction = None
         self._latest_prediction_valid = False
         self._last_raw_pose = None
-        self._last_raw_twist = None
         self._prev_raw_pose_time_ns = None
         self._actual_capture_m = None
         self._actual_capture_time_ns = None
@@ -511,10 +507,7 @@ class PredictionNode(Node):
         if self.csv_logger is None or self._ekf_epoch_start_monotonic_s is None:
             return
         now_monotonic_s = time.monotonic()
-        snapshot = self.estimator.snapshot()
-        state = snapshot.state
         raw_pose = self._last_raw_pose
-        raw_twist = self._last_raw_twist
         intercept = packet["intercept_m"]
         command = packet["command_target_m"]
         hold = packet["hold_target_m"]
@@ -537,17 +530,6 @@ class PredictionNode(Node):
             "reason": packet["reason"],
         }
         row.update(triple(raw_pose, "pose_measured"))
-        row.update(triple(raw_twist, "twist_measured"))
-        row.update(
-            {
-                "ekf_x": float(state[0]),
-                "ekf_y": float(state[1]),
-                "ekf_z": float(state[2]),
-                "ekf_vx": float(state[3]),
-                "ekf_vy": float(state[4]),
-                "ekf_vz": float(state[5]),
-            }
-        )
         row.update(triple(intercept, "intercept"))
         row.update(
             {
