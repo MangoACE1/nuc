@@ -102,6 +102,6 @@ ros2 service call /netcatch/dynamics/arm std_srvs/srv/Trigger '{}'
 
 开发验收：开发机上的 `./verify_dev.sh` 返回 0，统一测试全部通过。部署包验收：NUC 上的 `./verify_nuc.sh` 返回 0，契约、两组生产模块编译和三个 launcher 的 `bash -n` 全部通过。
 
-现场验收：完成三点 VRPN 坐标对比；确认 `obj1` 类型、时间戳与约 200 Hz 真正交付；预测 topic 约 30 Hz；验证 arm 后持球/摆臂不误触发、手抛后自动进入 `TRACKING`、3 次稳定门控、`LOST`/恢复、cancel/rearm；receiver 与 `tcpdump` 均看到从指定通信接口发出的 `239.255.42.99:15150` 组播，约 30 Hz、单包不超过 1200 B。
+现场验收：完成三点 VRPN 坐标对比；确认 `obj1` 类型、时间戳与约 200 Hz 真正交付；预测 topic 约 30 Hz；验证 arm 后持球/摆臂不误触发、手抛后自动进入 `TRACKING`、3 次稳定门控、`LOST`/恢复、cancel/rearm；receiver 与 `tcpdump` 均看到从指定通信接口发出的 `239.255.42.99:15150` 组播，约 30 Hz、单包不超过 1200 B。**注意：预测频率统一改为60Hz,增大频率可增加收敛速度。**
 
 当前 Wi-Fi 网络上的 NUC 到三台 Jetson 组播已经完成测试；以后更换 Wi-Fi、有线接口或网段时，需要重新检查各机 IP 和组播接收。正式 Jetson `dynamics` receiver 与 policy 接入仍是后续工作。
